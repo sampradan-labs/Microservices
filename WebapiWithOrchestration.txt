@@ -1,0 +1,15 @@
+Creating containerized app and orchestrated web api from Visual Studio
+
+1. Create a blank solution in Visual Studio
+2. Add a solution folder named "Services"
+3. Right-click on "Services" folder and add a WebApi project named "FirstApi"
+	- Target should be .net 6
+	- Uncheck Use Https
+	- Uncheck Use docker
+	- The rest will be default
+	- To match the directory structure of VS add "\Services" to the end of project directory
+4. Build the project and run it
+5. Right-click on FirstApi -> Add -> Orchestration Support -> Choose Docker-Compose option
+6. This will create a Docker-Compose Project containing docker-compose.yml
+7. Set Docker-Compose project as Startup project and run it.
+8. Observe the Docker desktop, to find your container.
