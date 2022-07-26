@@ -1,0 +1,99 @@
+1. Create web api project called ProductsApi
+2. Add Models folder -> Add Class "Product" with following properties
+	public class Product
+    	{
+        public Guid Id { get; set; }
+        public string Name { get; set; }
+        public double Cost { get; set; }
+    	}
+
+3. Create Entity Framework API Controller. Fill in Details in the dialog. 
+   Click OK. It will install expected EF Core dependencies. In case of errors install manually.
+
+4. Add Docker Orchestration support as follows. Right-click -> Add -> Docker Orchestration Support. This will create the Dockerfile & add required service container settings in the docker-compose project.
+    i. Open docker-compose.yml, add the following after redis configs or 
+       at least before the firsApi configs
+	sqldata:
+    	  container_name: sqldata
+    	  image: mcr.microsoft.com/mssql/server:2019-latest
+    	  restart: always
+    	  environment:
+            ACCEPT_EULA: "Y"
+            SA_PASSWORD: "sa@12345Ok!"
+            MSSQL_PID: Developer
+    	  ports:
+            - "1433:1433"
+	
+   ii. Locate the configs for productsapi (at the bottom). Add the following.
+	environment:
+      	  DbServer: "sqldata"
+      	  DbPort: "1433"
+      	  DbUser: "SA"
+      	  Password: "sa@12345Ok!"
+      	  Database: "ProductsDB"
+    	  depends_on:
+      	    - sqldata
+     
+
+5. Make changes program.cs to
+   i. Use the db related environment variables for connection string creation using EF. Please add these lines after var builder= WebApplication.CreateBuilder(args)
+	var server = builder.Configuration["DbServer"] ?? "localhost";
+	var port = builder.Configuration["DbPort"] ?? "1433"; // Default SQL Server port
+	var user = builder.Configuration["DbUser"] ?? "SA"; // Warning do not use the SA account
+	var password = builder.Configuration["Password"] ?? "sa@12345Ok!";
+	var database = builder.Configuration["Database"] ?? "ProductDb";
+
+	//concatenate them into a connection string
+	//server, port;Initial Catalog=database;userID=user;password=password
+	var connectionString = $"Server={server}, {port};Initial Catalog={database};User ID={user};Password={password}";
+
+	builder.Services.AddDbContext<ProductsApiContext>(options =>
+    	options.UseSqlServer((connectionString) ?? throw new InvalidOperationException("Connection string 'ProductsApiContext' not found.")));
+
+
+6. Create a folder MigService. This is used to migrate the DB to the undrelying container.
+	i. Create a class named "DbMigrationService". Add the following code inside the class.
+		public static void MigrationInit(IApplicationBuilder app)
+        	{
+
+            		using (var serviceScope = app.ApplicationServices.CreateScope())
+            		{
+                	 try
+                	 {
+                    	  serviceScope.ServiceProvider.GetService<ProductsApiContext>().Database.Migrate();
+                	 }
+                	catch (Exception ex)
+                	{
+                    	 Debug.WriteLine(ex.Message);
+                	}
+            		}
+       	 	}
+
+7. Make changes in program.cs after the line builder.Build(); Add the following.
+	DbMigrationService.MigrationInit(app);
+8. Create a migration snapshot. Two ways. Use anyone.
+	i. Open Package Manager Console (PMC). Make ProductsApi as Startup project. In the PMC choose ProductsApi in Default Project dropdown.
+		a. >Add-Migration v1
+       		b. This will create a migration folder with the snapshot.
+	ii. Open command prompt OR in VS open the Developer Command Prompt (View menu -> Terminal)
+		a. > dotnet tool install --global dotnet-ef
+		b. > dotnet ef migrations add v1
+		c. This will create the migration folder.
+9. Build & Run the Docker Compose project. From the Container panel in VS choose your ProductsApi service -> Ports Tab -> Click on the mapped port.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
