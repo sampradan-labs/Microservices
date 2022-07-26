@@ -1,0 +1,67 @@
+Creating a microservice that is dependent on an in-memory db like redis cache
+1. Create Web Api project called FirstApi
+2. Install nuget package: Microsoft.Extensions.Caching.StackExchangeRedis
+3. Add it as dependency to asp.net core DI Container :  in Startup.cs
+   Add the following code:
+	This code should be added before builder.Build() statement
+	builder.Services.AddStackExchangeRedisCache((options) => {
+    					options.Configuration = "rediscache:6379";
+    					options.InstanceName = "SampleInstance";
+					});
+
+	**Note: Redis cache uses the port 6379 for in-memory distributed cache
+	        Hence rediscache is configured in the docker-compose.yml file
+4. Inject redis cache as dependency in controller's constructor
+	i. Create a new empty API controller: CounterController
+	ii. Add a parameterized contructor taking IDistributedCache as parameter
+		private readonly IDistributedCache _cache;
+
+        	public CounterController(IDistributedCache cache)
+        	{
+            		_cache = cache;
+			//checking if the redis cache has a key called counter
+            		if (String.IsNullOrEmpty(_cache.GetString("counter")))
+                	_cache.SetString("counter", "0");
+        	}
+5. Create your APIs that access the redis cache
+	i. Here we will add GetCounter() API
+		[HttpGet("/counter")]
+        	public int GetCounter()
+        	{
+           	 string strCountValue = _cache.GetString("counter");
+           	 int intCounter = Convert.ToInt32(strCountValue);
+          	  intCounter++;
+           	 _cache.SetString("counter", intCounter.ToString());
+           	 return intCounter;
+       		}
+
+6. Build your application
+7. Open Docker-compose.yml in Docker-Compose project. Add the following config.
+	Under "services:" add following
+	rediscache:
+    	  container_name: rediscache
+    	  image: redis:alpine
+    	  ports:
+           - "6389:6379"
+8. Save the file
+9. Run the Docker-Compose project
+10. Open your FirstApi on the browser and test
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
