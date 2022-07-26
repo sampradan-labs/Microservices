@@ -1,0 +1,43 @@
+version: '3.4'
+
+services:
+  rediscache:
+    container_name: rediscache
+    image: redis:alpine
+    ports:
+        - "6389:6379"
+
+  sqldata:
+    container_name: sqldata
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    restart: always
+    environment:
+        ACCEPT_EULA: "Y"
+        SA_PASSWORD: "sa@12345Ok!"
+        MSSQL_PID: Developer
+    ports:
+        - "1433:1433"
+
+  firstapi:    
+    container_name: firstapi
+    image: ${DOCKER_REGISTRY-}firstapi
+    build:
+      context: .
+      dockerfile: Services/FirstApi/Dockerfile
+    depends_on:
+        - rediscache
+  
+  productsapi:
+    image: ${DOCKER_REGISTRY-}productsapi
+    build:
+      context: .
+      dockerfile: Services/ProductsApi/Dockerfile
+    environment:
+      DbServer: "sqldata"
+      DbPort: "1433"
+      DbUser: "SA"
+      Password: "sa@12345Ok!"
+      Database: "ProductsDB"
+    depends_on:
+      - sqldata
+
