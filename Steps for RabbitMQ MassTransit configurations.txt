@@ -1,0 +1,92 @@
+Using RabbitMQ with Mass Trasit Operations
+
+1. Copy the CartServiceMessageBroker project from Github
+2. Install the following Nuget Packages (Already installed in the project)
+	
+3. Configurations for Mass Transit + RabbitMQ in Startup.cs. This should be added BEFORE the builder.Build() call
+
+// MassTransit-RabbitMQ Configuration
+builder.Services.AddMassTransit(config => {
+    config.UsingRabbitMq((ctx, cfg) => {
+        cfg.Host(builder.Configuration["EventBusSettings:HostAddress"]);
+    });
+});
+builder.Services.AddMassTransitHostedService();
+
+4. Now we need to add the code to make a publish to the publish endpoint.
+   In the BasketController.cs, replace the constructor code with the following. This code, is injecting automapper, publishEndpoint objects into the constructor.
+
+	private readonly IBasketRepository _repository;
+        private readonly IMapper _mapper;
+        private readonly IPublishEndpoint _publishEndpoint;
+        public BasketController(IBasketRepository repository, IMapper mapper, IPublishEndpoint publishEndPoint)
+        {
+            _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+            _mapper = mapper;
+            _publishEndpoint = publishEndPoint ?? throw new ArgumentNullException(nameof(publishEndPoint));
+
+         }
+
+
+5. To publish to the RabbitMQ publish endpoint, we will add the "checkout" API to the controller. Hence in the BasketController.cs, add the following api
+	[HttpPost("/checkout")]
+        [ProducesResponseType((int)HttpStatusCode.Accepted)]
+        [ProducesResponseType((int)HttpStatusCode.BadRequest)]
+        public async Task<IActionResult> Checkout([FromBody] BasketCheckout pBasketCheckout)
+        {
+            // get existing basket with total price            
+            // Set TotalPrice on basketCheckout eventMessage
+            // send checkout event to rabbitmq
+            // remove the basket
+
+            // get existing basket with total price
+            var basket = await _repository.GetBasket(pBasketCheckout.UserName);
+            if (basket == null)
+            {
+                return BadRequest();
+            }
+
+            // send checkout event to rabbitmq
+            var eventMessage = _mapper.Map<BasketCheckoutEvent>(pBasketCheckout);
+            eventMessage.TotalPrice = basket.TotalPrice;
+            await _publishEndpoint.Publish<BasketCheckoutEvent>(eventMessage);
+
+            // remove the basket
+            await _repository.DeleteBasket(basket.UserName);
+
+            return Accepted();
+        }
+
+6. Now we shall orchestrate the project to Docker-Compose. To do this, right-click on the CartServiceMessageBroker project -> Add -> Orchestration Support -> Choose Docker-Compose. This will create a DockerFile in the project and add some cofigurations in the docker-compose.yml file.
+
+7. Open docker-compose.yml file, navigate to the end to view the added configs. Replace it with
+    cartservicemessagebroker:
+    image: ${DOCKER_REGISTRY-}cartservicemessagebroker
+    build:
+      context: .
+      dockerfile: CartServiceMessageBroker/Dockerfile    
+    depends_on:
+      - rediscache
+
+8. Add configs for rabbitmq container as follows.
+	
+    rabbitmq:
+    image: rabbitmq:3-management-alpine
+
+9. In the docker-compose.override.yml file add the following configs for rabbitmq
+    rabbitmq:
+    container_name: rabbitmq
+    restart: always
+    ports:
+        - "5672:5672"
+        - "15672:15672"
+
+10. Now in the docker-compose.override.yml file, locate "cartservicemessagebroker" configs in it. Add the following environmentvariables
+	environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - "CacheSettings:ConnectionString=redis:6379"
+      - "EventBusSettings:HostAddress=amqp://guest:guest@rabbitmq:5672"
+
+11. Build the project. Set Docker-compose project as the startup project. Run. Execute the Checkout API.
+12. On the browser open the RabbitMQ server by browsing to http://localhost:15672/
+    Here you should note a peak in the graph.	
