@@ -54,3 +54,14 @@ services:
       Database: "Blogs"
     depends_on:
       - sqldata
+
+ rabbitmq:
+    image: rabbitmq:3-management-alpine
+
+  cartservicemessagebroker:
+    image: ${DOCKER_REGISTRY-}cartservicemessagebroker
+    build:
+      context: .
+      dockerfile: CartServiceMessageBroker/Dockerfile    
+    depends_on:
+      - rediscache
