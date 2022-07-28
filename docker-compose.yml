@@ -41,3 +41,16 @@ services:
     depends_on:
       - sqldata
 
+  cqrsapi:
+    image: ${DOCKER_REGISTRY-}cqrsapi
+    build:
+      context: .
+      dockerfile: Services/CqrsApi/Dockerfile
+    environment:
+      DbServer: "sqldata"
+      DbPort: "1433"
+      DbUser: "SA"
+      Password: "sa@12345Ok!"
+      Database: "Blogs"
+    depends_on:
+      - sqldata
