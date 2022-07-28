@@ -33,6 +33,9 @@ Microsoft.VisualStudio.Web.CodeGeneration.Design - v6.0.7
 3. Create a API Controller with Entity Framework Actions.
 4. In the dialog that follows choose the model class as Post, add the
    data context class, click ok. This will down EF Core nuget packages
+4.1 Please add the following in CqrsApiContext.cs
+     public DbSet<CqrsApi.Models.ReadPost> PostsView { get; set; } = default!;
+     
 5. In Program.cs,  add the configurations for connection string as follows
 	var server = builder.Configuration["DbServer"] ?? "localhost";
 	var port = builder.Configuration["DbPort"] ?? "1433"; // Default SQL Server port
