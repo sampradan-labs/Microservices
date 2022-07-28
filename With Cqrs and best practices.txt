@@ -1,0 +1,253 @@
+CQRS Pattern
+
+---------------------
+Extra Nuget Packages required for this lab
+AutoMapper - v11.0.1
+AutoMapper.Extensions.Microsoft.DependencyInjection -v11.0.0
+Dapper - v2.0.123
+Microsoft.EntityFrameworkCore.SqlServer - v6.0.7
+Microsoft.EntitiyFrameworkCore.Tools - v6.0.7
+Microsoft.VisualStudio.Azure.Containers.Tools.Targets - v1.14.0
+Microsoft.VisualStudio.Web.CodeGeneration.Design - v6.0.7
+---------------------
+
+
+1. Create web api project as CqrsApi
+2. Add the following folders
+	i. Commands folder
+		- Add SaveCommand folder
+			- Add an interface called ISavePostCommand
+			- Add an interface called ISavePostEvents
+			- Add a class SavePostCommand : ISavePostCommand, ISavePostEvents
+	ii. Queries folder
+		- Add GetPosts Folder
+			- Add an interface called IGetPosts
+			- Add a class GetPosts : IGetPosts
+	iii. Models Folder
+		- Add a class "Post"
+		- Add a class "PostsView"
+	iv. MigService Folder
+		- Add a class "MigService"
+	v. VM Folder
+		- Add a class "PostViewModel"
+3. Create a API Controller with Entity Framework Actions.
+4. In the dialog that follows choose the model class as Post, add the
+   data context class, click ok. This will down EF Core nuget packages
+5. In Program.cs,  add the configurations for connection string as follows
+	var server = builder.Configuration["DbServer"] ?? "localhost";
+	var port = builder.Configuration["DbPort"] ?? "1433"; // Default SQL Server port
+	var user = builder.Configuration["DbUser"] ?? "SA"; // Warning do not use the SA account
+	var password = builder.Configuration["Password"] ?? "sa@12345Ok!";
+	var database = builder.Configuration["Database"] ?? "ProductDb";
+
+	//concatenate them into a connection string
+	//server, port;Initial Catalog=database;userID=user;password=password
+	var connectionString = $"Server={server}, {port};Initial Catalog={database};User ID={user};Password={password}";
+
+6. Add docker orchestration by right-clicking the CqrsApi project -> Add Orchestration Support
+7. In the docker-compose.yml file add the following
+  cqrsapi:
+    image: ${DOCKER_REGISTRY-}cqrsapi
+    build:
+      context: .
+      dockerfile: Services/CqrsApi/Dockerfile
+    environment:
+      DbServer: "sqldata"
+      DbPort: "1433"
+      DbUser: "SA"
+      Password: "sa@12345Ok!"
+      Database: "Blogs"
+    depends_on:
+      - sqldata
+
+8. In the MigService.cs file add the following code inside the class
+	public static void MigrationInit(IApplicationBuilder app)
+        {
+
+            using (var serviceScope = app.ApplicationServices.CreateScope())
+            {
+                try
+                {
+                    serviceScope.ServiceProvider.GetService<CqrsApiContext>().Database.Migrate();
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine(ex.Message);
+                }
+            }
+        }
+	
+9. For CQRS all transactions happen through command and queries. Hence, the controller will only interact with BL logic through commands & queries.
+   Hence in Program.cs add the mapping for <ISavePost,SavePost>, <IGetPosts, GetPosts>. Add the following code after the connectionString is created.
+
+
+builder.Services.AddScoped<ISavePostCommand, SavePostCommand>();
+builder.Services.AddScoped<IGetPosts, GetPosts>(ctor => new GetPosts(connectionString));
+
+10. In the PostsController, inject the ISavePost, IGetPosts in the constructor as follows
+	private readonly ISavePostCommand _saveCommand;
+        private readonly IGetPosts _getPostsQuery;
+
+        public PostsController(ISavePostCommand saveCommand, IGetPosts getPostsQuery)
+        {
+            _saveCommand = saveCommand;
+            _getPostsQuery = getPostsQuery;
+        }
+11. In ISavePostCommand.cs add the following
+    public interface ISavePostCommand
+    {        
+        Task<Post> SavePost(string title, string body);
+    }
+
+    public interface ISavePostEvents
+    {
+        event EventHandler Sync;
+    }
+
+
+12. In the SavePostCommand.cs add the following
+public class SavePostCommand : ISavePostCommand, ISavePostEvents
+    {
+        public event EventHandler Sync;
+
+        private readonly CqrsApiContext _context;
+        private readonly MapperConfiguration _config;
+        private readonly IMapper _mapper;
+
+        public SavePostCommand(CqrsApiContext context)
+        {
+            _context = context;
+
+            //Attach the event
+            if (Sync == null)
+            {
+                Sync += CommandService_Sync;
+            }
+
+            _config = new MapperConfiguration(cfg =>
+                                                {
+                                                    cfg.CreateMap<Post, ReadPost>().ReverseMap();
+
+                                                });
+            _mapper = _config.CreateMapper();
+        }
+
+        private void CommandService_Sync(object? sender, EventArgs e)
+        {
+            Thread.Sleep(500);
+            if (Sync != null)
+            {
+                _context.PostsView.Add(sender as ReadPost);
+                _context.SaveChanges(); //db update updating the PostView table
+            }
+            
+        }
+
+        public async Task<Post> SavePost(string title, string body)
+        {
+            Post newPost = new Post() { Title = title, Body = body };
+           _context.Post.Add(newPost);  
+            _context.SaveChanges(); //db table update updating the Post table
+
+            //Trigger event to synchronize with read model
+            ReadPost readPost = _mapper.Map<ReadPost>(newPost);
+            Sync.Invoke(readPost, new EventArgs());
+
+            return newPost;
+        }
+    }
+
+13. Now code the queries. In the IGetPosts.cs add the following
+ public interface IGetPosts
+    {
+        IEnumerable<ReadPost> GetAllPosts();
+    }
+
+14. In the GetPosts.cs add the following
+public class GetPosts : IGetPosts
+    {
+        private readonly string _connectionString;
+
+        public GetPosts(string connectionString)
+        {
+            _connectionString = connectionString;
+        }
+
+        public IEnumerable<ReadPost> GetAllPosts()
+        {
+            using (var conn = new SqlConnection(_connectionString))
+            {
+                conn.Open();
+
+                return conn.Query<ReadPost>("SELECT * FROM dbo.PostsView;");
+            }
+        }
+
+       
+    }
+
+15. In the Post.cs which is in the Models folder add the following
+	 public class Post
+    {
+        public int Id { get; set; }
+
+        public string Title { get; set; }
+
+        public string Body { get; set; }
+    }
+
+16. 15. In the ReadPost.cs which is in the Models folder add the following
+	 public class ReadPost
+    {
+        public int Id { get; set; }
+
+        public string Title { get; set; }
+
+        public string Body { get; set; }
+    }
+
+17. In the PostViewModel.cs which is in the VM folder add the following
+	 public class PostViewModel
+    {
+ 
+        public string Title { get; set; }
+
+        public string Body { get; set; }
+    }
+
+18. Add the two API methods in PostController
+	[HttpGet("/posts")]
+        public async Task<ActionResult<IEnumerable<ReadPost>>> Get()
+        {
+            return (_getPostsQuery.GetAllPosts()).ToList();
+        }
+
+
+
+        // POST api/values
+        [HttpPost("/add")]
+        public void SavePost([FromBody] PostViewModel value)
+        {
+            _saveCommand.SavePost(value.Title, value.Body);
+        }
+
+19. Create a migration so that db can be created on the sqldata container. Set CqrsApi project as Startup project & default project in dropdown in PMC console
+	a. Commands using Package Manager Console
+		> Add-Migration
+	b. If step (a) fails, then
+		> Open command prompt and navigate to project directory
+			> dotnet tool install --global dotnet-ef --version <versionNumber>
+			> dotnet ef migrations add v1
+
+20. Build the project.
+21. Set docker-compose as Startup project. Run.
+
+
+
+
+
+
+
+
+
+
