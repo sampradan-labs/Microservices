@@ -1,0 +1,62 @@
+Here we will call the already created ProductsApi from the newly created CartApi
+
+1. Add a new Web Api Core Project named CartApi inside Services folder of the solution. The ProductsApi web api project is expected to already be in the Services folder. If not done, please follow instructions in the document titled "Steps for webapi + EF + SQL Server using docker orchestration.txt"
+
+2. Create a Web Api Empty Controller named CartController
+3. Add a new class in the same CartController namespace as follows
+   public class ProductApiCaller
+    {
+        private readonly HttpClient _httpClient; 
+        public ProductApiCaller(HttpClient httpClient) 
+        { 
+            _httpClient = httpClient; 
+        }
+        public async Task<List<ProductResult>> GetProducts()
+        {
+            using (var client = new System.Net.Http.HttpClient())
+            {
+                // Call *mywebapi*, and display its response in the page
+                var request = new System.Net.Http.HttpRequestMessage();
+                request = new HttpRequestMessage();
+                request.RequestUri = new Uri("http://productsapi/api/Products");
+                var response2 = await client.SendAsync(request);
+                string strItems = await response2.Content.ReadAsStringAsync();
+
+                List<ProductResult> items = JsonConvert.DeserializeObject<List<ProductResult>>(strItems);
+                return items;
+            }
+        }
+    }
+
+4. In the CartController, add the code to inject the ProductApiCaller in the constructor. Then add the api to fetch results by calling the ProductApiCaller.GetProducts()
+
+    [Route("api/[controller]")]
+    [ApiController]
+    public class CartController : ControllerBase
+    {
+	private readonly ILogger<CartController> _logger;
+        private readonly ProductApiCaller _caller;
+
+        public CartController(ILogger<CartController> logger, ProductApiCaller caller)
+        {
+            _logger = logger;
+            _caller = caller;
+        }
+
+        [HttpGet("/GetCart")]
+        public async Task<IActionResult> Get()
+        {
+            var items = await _caller.GetProducts();
+            return Ok(items);
+        }
+    }
+
+5. The final glue would be to add HttpClient in the Startup.cs / Program.cs, so that the HttpClient instance is available and usable when the application is loaded
+	
+	builder.Services.AddHttpClient<CartApi.Controllers.ProductApiCaller>();
+
+6. Right-click on the CartApi project -> Add Orchestration Support -> Docker. This will add an entry in the docker-compose project.
+
+7. Set the docker-compose project as the startup project and run it.
+8. In the Containers Window, click CartApi -> Ports Tab -> Click the Port Number to launch your service
+

@@ -1,0 +1,213 @@
+To use Ocelot Api Gateway
+
+Api Gateways form a central point of communication to route to different microservices, manage authentication, authorization before routing to the microservices etc.
+
+Orchestration does similar things, but is also used to containerize and deploy the applications and services
+
+STEP 1:
+
+For using Ocelot Api Gateway, we will require 3 projects
+
+1. Project 1: WebApi Core: OcelotGateway.csproj
+2. Project 2: WebApi Core: ServiceA
+3. Project 3: WebApi Core: ServiceB
+
+While creating all of the above projects, make sure the Use https, Use Docker Container options remain UN-Checked
+
+Build and run all the above projects separately.
+** NOTE the port numbers for projects ServiceA, ServiceB
+
+STEP 2:
+
+In the OcelotGateway.csproj, perform the following steps
+1. Install Nuget Package Ocelot
+2. Add a json file to the project named ocelot.json
+3. In ocelot.json, we will reference the microservices ServiceA, ServiceB as configurations, as follows
+
+{
+  "Routes": [
+
+    {
+      "DownstreamPathTemplate": "/ServiceAForecast",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "localhost",
+          "Port": <port number of ServiceA project noted in above step>
+        }
+      ],
+      "UpstreamPathTemplate": "/Accuweather",
+      "UpstreamHttpMethod": [ "GET" ]
+    },
+
+    {
+      "DownstreamPathTemplate": "/ServiceBForecast",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "localhost",
+          "Port": <port number of ServiceB project noted in above step>
+        }
+      ],
+      "UpstreamPathTemplate": "/Googleweather",
+      "UpstreamHttpMethod": [ "GET" ]
+    }
+  ]
+}
+
+
+4. Open Program.cs, and add the following configurations before the code builder.Services.AddControllers()
+
+	builder.Configuration.AddJsonFile("ocelot.json", optional: false, reloadOnChange: false);
+	builder.Services.AddOcelot(builder.Configuration);
+
+5. In Program.cs, after the code app.MapControllers() add the following
+	await app.UseOcelot();
+
+6. Add the missing namespaces for steps 4,5 which are
+	using Ocelot.DependencyInjection;
+	using Ocelot.Middleware;
+
+STEP 3:
+
+1. In ServiceA.csproj, Open the WeatherForecastController.cs and replace HttpGet(...) with the following
+	 [HttpGet("/ServiceAForecast")]
+	 public IEnumerable<WeatherForecast> Get(){ .... }
+
+2. In ServiceB.csproj, Open the WeatherForecastController.cs and replace HttpGet(...) with the following
+	 [HttpGet("/ServiceBForecast")]
+	 public IEnumerable<WeatherForecast> Get(){ .... }
+Save everything. Build the solution
+
+STEP 4:
+
+1. Right-click on the solution -> Setup Startup projects
+2. Select Multiple Startup Projects, in the action drop-down choose "Start" for all the 3 projects
+3. Click Apply then click Ok
+
+STEP 5:
+
+Run the project. This will run all the 3 projects simultaneously.
+In the ocelot project opened in the browser, the change the url to
+localhost:<port>/ServiceAForecast : This should automatically redirect to ServiceA microservice and execute it.
+then do the same for ServiceB viz. localhost:<port>/ServiceBForecast
+
+This completes the basic implementation of routing using Ocelot Api Gateway
+---------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------
+
+
+DEPLOYING THE OCELOT GATEWAY INTO DOCKER CONTAINERS
+
+1. In Visual Studio, Right-click on OcelotApiGateway.csproj -> Add Orchestration Support -> Choose Docker
+   Right-click on ServiceA.csproj -> Add Orchestration Support -> Choose Docker
+   Right-click on ServiceB.csproj -> Add Orchestration Support -> Choose Docker
+
+   This creates a docker-compose project. Check the containers window (View -> Other Windows -> Containers). The docker containers would have been created. Now if you run the docker-compose project, all services would be running in docker containers. To ensure wiring between ocelot gateway and docker-compose orchestration, we will make some changes to ocelot.json and docker-compose.yml
+
+2. In ocelot.json, the host attributes in DownstreamHostingAndPorts should point to the docker-compose.yml file's, service name. For eg: In ocelot.json "Host": "localhost" will now become "Host" : "servicea". All the port numbers should point to the docker container's port viz. port 80. Now replace the configuration in ocelot.json with the following
+
+{
+  "Routes": [
+
+    {
+      "DownstreamPathTemplate": "/ServiceAForecast",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "servicea",
+          "Port": 80
+        }
+      ],
+      "UpstreamPathTemplate": "/Accuweather",
+      "UpstreamHttpMethod": [ "GET" ]
+    },
+
+    {
+      "DownstreamPathTemplate": "/ServiceBForecast",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "serviceb",
+          "Port": 80
+        }
+      ],
+      "UpstreamPathTemplate": "/Googleweather",
+      "UpstreamHttpMethod": [ "GET" ]
+    }
+  ],
+  "GlobalConfiguration": { "BaseUrl": "http://localhost:80" }
+}
+
+
+3. The docker-compose.yml configurations will have some additional attributes such as depends_on, to look for multiple port forwarding configurations and any asp.net configurations. Replace the docker-compose.yml configurations with the following
+
+version: '3.4'
+
+services:
+  ocelotapigateway:
+    image: ${DOCKER_REGISTRY-}ocelotapigateway
+    build:
+      context: .
+      dockerfile: OcelotApiGateway/Dockerfile
+    ports: 
+        - "5046:80"
+    environment: 
+        - ASPNETCORE_ENVIRONMENT=Development 
+        - ASPNETCORE_URLS=http://+:80
+    depends_on: 
+        - servicea 
+        - serviceb
+
+  servicea:
+    image: ${DOCKER_REGISTRY-}servicea
+    build:
+      context: .
+      dockerfile: ServiceA/Dockerfile
+    ports: 
+        - "5000:80"
+    environment: 
+        - ASPNETCORE_ENVIRONMENT=Development
+
+
+  serviceb:
+    image: ${DOCKER_REGISTRY-}serviceb
+    build:
+      context: .
+      dockerfile: ServiceB/Dockerfile
+    ports: 
+        - "5001:80"
+    environment: 
+        - ASPNETCORE_ENVIRONMENT=Development
+
+
+4. Rebuild the solution. Now execute the docker-compose project only. It will create the underlying containers and run all the services with the ocelot gateway configurations
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
