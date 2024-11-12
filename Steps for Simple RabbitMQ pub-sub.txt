@@ -1,0 +1,152 @@
+Simple RabbitMQ publisher, consumer
+This lab consists of 3 projects
+1. Event.Bus Project: This projects contains the set of common events that can be used for message passing accross microservices
+
+2. SamplePublisher project: Project that publishes to RabbitMQ
+
+3. SampleConsumer project: Project that consumes from RabbitMQ
+---------------------------------------------------------------------
+LAB:
+
+1. Recreate the above project
+2. In docker-compose.yml add 
+   rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rabbitmq
+    restart: always
+    ports:
+        - "5672:5672"
+        - "15672:15672"
+
+3. Orchestrate the projects Publisher, Consumer in docker-compose with following settings
+   consumer:
+    image: ${DOCKER_REGISTRY-}consumer
+    build:
+      context: .
+      dockerfile: Services/DistributedEvents/Consumer/Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - "EventBusSettings:HostAddress=amqp://guest:guest@rabbitmq:5672"
+
+4. In the projects Publisher, Consumer add the following in appsettings
+   "EventBusSettings": {
+    "HostAddress": "amqp://guest:guest@rabbitmq:5672"
+  }
+
+
+   publisher:
+    image: ${DOCKER_REGISTRY-}publisher
+    build:
+      context: .
+      dockerfile: Services/DistributedEvents/Publisher/Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - "EventBusSettings:HostAddress=amqp://guest:guest@rabbitmq:5672"
+
+5. Create the events in the Event.Bus Project
+   # Create a class named IntegrationBusEvent. Add the following to it
+	public class IntegrationBaseEvent
+    {
+        public IntegrationBaseEvent()
+        {
+            Id = Guid.NewGuid();
+            CreationDate = DateTime.UtcNow;
+        }
+
+        public IntegrationBaseEvent(Guid id, DateTime createDate)
+        {
+            Id = id;
+            CreationDate = createDate;
+        }
+
+        //similar to event id to be tracked in a queueing tool like RabbitMQ
+        public Guid Id { get; private set; }
+
+        public DateTime CreationDate { get; private set; }
+    }
+
+
+   # Create a class named Events. Add the following to it
+	 public class BasketCheckoutEvent : IntegrationBaseEvent
+    {
+        public string UserName { get; set; }
+        public decimal TotalPrice { get; set; }
+
+        // BillingAddress
+        public string FirstName { get; set; }
+        public string LastName { get; set; }
+        public string EmailAddress { get; set; }
+        public string AddressLine { get; set; }
+        public string Country { get; set; }
+        public string State { get; set; }
+        public string ZipCode { get; set; }
+
+        // Payment
+        public string CardName { get; set; }
+        public string CardNumber { get; set; }
+        public string Expiration { get; set; }
+        public string CVV { get; set; }
+        public int PaymentMethod { get; set; }
+
+    }
+
+   # Create the events in a new class named EventBusConstants. Add the following to it
+	public static class EventBusConstants
+    {
+        public const string BasketCheckoutQueue = "basketcheckout-queue";
+    }
+
+6. In the Publisher project, Consumer project, add the following nuget packages
+	MassTransit
+	MassTransit.AspNetCore
+	MassTransit.RabbitMQ
+
+** Add a reference to Event.Bus project to Publisher, Consumer Projects
+
+7. In Publisher project, in Program.cs add the following before builder.Build()
+	builder.Services.AddMassTransit(config => {
+    		config.UsingRabbitMq((ctx, cfg) => {
+        	cfg.Host(builder.Configuration["EventBusSettings:HostAddress"]);
+     		});
+	});
+
+8. In Publisher Project, add a new controller named SendController then add the following code
+	private readonly IPublishEndpoint _publishEndpoint;
+
+        public SendController(IPublishEndpoint publishEndpoint)
+        {
+            _publishEndpoint = publishEndpoint;
+        }
+
+        [HttpPost("/send")]
+        public async Task<IActionResult> Send([FromBody] BasketCheckoutEvent msg)
+        {
+            await _publishEndpoint.Publish<BasketCheckoutEvent>(msg);
+            return Ok();
+        }
+
+9. In Consumer project, add a new class named MessageConsumer, then add the following code 
+	 public async Task Consume(ConsumeContext<BasketCheckoutEvent> context)
+        {
+           Debug.WriteLine(context.Message);
+        }
+
+10. In Consumer project, in Program.cs add the following before builder.Build()
+	 
+    config.AddConsumer<MessageConsumer>();
+
+    config.UsingRabbitMq((ctx, cfg) => {
+        cfg.Host(builder.Configuration["EventBusSettings:HostAddress"]);
+        //cfg.UseHealthCheck(ctx);
+
+        cfg.ReceiveEndpoint("q1", c => {
+            c.ConfigureConsumer<MessageConsumer>(ctx);
+        });
+    });
+});
+
+11. Build and Run docker-compose project. Run the Publisher service to simulate the Send api. You will see that the Consumer Project will respond to this event.
+	
+	
+
+
