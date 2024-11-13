@@ -1,0 +1,269 @@
+Ocelot with JWT authentication and Role based authorization
+
+Here, we will create a generic class library called JwtAuthenticationManager, where we will add JWT authentication logic and expose an extension method.
+This library will be plugged in with one or more micro services
+
+Assumption: You have already completed the lab to create an ocelot api gateway with 2 services ServiceA, ServiceB
+
+STEP 1:
+Create a class library named JwtAuthenticationManager
+1. Create a Models folder
+2. Add 3 classes inside Models folder namely
+	i. AuthenticationRequest
+		public class AuthenticationRequest
+    		{
+        		public string UserName { get; set; }
+        		public string Password { get; set; }
+    		}
+       ii. AuthenticationResponse
+		public class AuthenticationResponse
+    		{
+        		public string UserName { get; set; }
+        		public string JwtToken { get; set; }
+
+        		public int ExpiresIn { get; set; }
+    		}
+      iii. UserAccount
+		public class UserAccount
+    		{
+        		public string UserName { get; set; }
+        		public string Password { get; set; }
+        		public string Role { get; set; }
+    		}
+
+3. Add 2 more classes outside the Models folder namely
+	i. JwtTokenHandler : The actual logic to generate auth key token
+	ii. CustomJwtAuthExtension : An extension to plug it to multiple microservices
+
+4. Add the following Nuget Packages to this project
+	i. Microsoft.AspNetCore.Authentication.JwtBearer
+	ii. Microsoft.Extensions.DependencyInjection.Abstractions
+	iii. Microsoft.IdentityModel.Tokens
+	iv. System.IdentityModel.Tokens.Jwt
+
+5. Inside JwtTokenHandler, add the following code
+   public class JwtTokenHandler
+    {
+        public const string JWT_SECURITY_KEY = "ybkslkdufoweuruhYEOW89laksjdfaacaoslieYBalkeNalkjahsdSUwbnaoeu";
+        public const int JWT_TOKEN_VALIDITY_MINS = 20;
+        private readonly List<UserAccount> _userAccountList;
+        public JwtTokenHandler()
+        {
+            _userAccountList = new List<UserAccount>()
+            {
+                new UserAccount() {UserName="admin", Password="nimda", Role="Administrator"},
+                new UserAccount() {UserName="user01", Password="user01", Role="User"}
+            };
+        }
+
+        public AuthenticationResponse? GenerateJwtToken(AuthenticationRequest authenticationRequest)
+        {
+            if(string.IsNullOrWhiteSpace(authenticationRequest.UserName) || string.IsNullOrWhiteSpace(authenticationRequest.Password))
+                return null;
+            
+            var userAccount = _userAccountList.Where(x => x.UserName == authenticationRequest.UserName && x.Password == authenticationRequest.Password).FirstOrDefault();
+            if (userAccount == null)
+                return null;
+
+            var tokenExpiryTimeStamp = DateTime.Now.AddMinutes(JWT_TOKEN_VALIDITY_MINS);
+            var tokenKey = Encoding.ASCII.GetBytes(JWT_SECURITY_KEY);
+
+            //configuring claims
+            var claimsIdentity = new ClaimsIdentity(new List<Claim>()
+            {
+                new Claim(JwtRegisteredClaimNames.Name, authenticationRequest.UserName),
+                new Claim("Role", userAccount.Role)
+
+            }) ;
+
+            var signingCredentials = new SigningCredentials(
+                new SymmetricSecurityKey(tokenKey),
+                SecurityAlgorithms.HmacSha256Signature
+                );
+
+            var securityTokenDescriptor = new SecurityTokenDescriptor
+            {
+                Subject = claimsIdentity,
+                Expires = tokenExpiryTimeStamp,
+                SigningCredentials = signingCredentials
+            };
+
+            var jwtSecurityTokenHandler = new JwtSecurityTokenHandler();
+            var securityToken = jwtSecurityTokenHandler.CreateToken(securityTokenDescriptor);
+
+            //convert token to string value
+            var token =  jwtSecurityTokenHandler.WriteToken(securityToken);
+
+            //return an AuthenticationResponse object
+            return new AuthenticationResponse()
+            {
+                UserName = userAccount.UserName,
+                ExpiresIn = (int)tokenExpiryTimeStamp.Subtract(DateTime.Now).TotalSeconds,
+                JwtToken = token
+            };
+        }
+    }
+
+6. Add the following to CustomJwtAuthExtension.cs
+   public static class CustomJwtAuthExtension
+    {
+        public static void AddCustomJwtAuthentication(this IServiceCollection services)
+        {
+            services.AddAuthentication(options =>
+            {
+                options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+                options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+            }
+            ).AddJwtBearer(options =>
+            {
+                options.RequireHttpsMetadata = false;
+                options.SaveToken = true;
+                options.TokenValidationParameters = new TokenValidationParameters()
+                {
+                    ValidateIssuerSigningKey = true,
+                    ValidateIssuer = false,
+                    ValidateAudience = false,
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(JwtTokenHandler.JWT_SECURITY_KEY))
+                };
+            });
+            
+        }
+    }
+
+7. Save everything and Build the project
+
+STEP 2:
+1. Create a web api project named AuthenticationApi
+2. Add a new controller named AccountController
+3. Add a project reference to JwtAuthenticationManager Project
+4. In Program.cs, add the following code before builder.Build()
+	builder.Services.AddSingleton<JwtTokenHandler>();
+
+5. In AccountController, add the following
+    [Route("api/[controller]")]
+    [ApiController]
+    public class AccountController : ControllerBase
+    {
+        private readonly JwtTokenHandler _jwtTokenHandler;
+        public AccountController(JwtTokenHandler jwtTokenHandler)
+        {
+            _jwtTokenHandler = jwtTokenHandler;
+        }
+
+        [HttpPost]
+        public ActionResult<AuthenticationResponse?> Authenticate(AuthenticationRequest authenticationRequest)
+        {
+            var authenticationResponse = _jwtTokenHandler.GenerateJwtToken(authenticationRequest);
+            if(authenticationResponse == null)  
+                return Unauthorized();
+            return authenticationResponse;
+        }
+    }
+
+6. Save and Build everything
+
+STEP 3:
+1. Create a new web Api project named ServiceC
+2. Add JwtAuthenticationManager as Project Reference
+3. In Program.cs add the following before builder.Services.AddControllers()
+	builder.Services.AddCustomJwtAuthentication();
+
+4. In Program.cs, add the following before app.MapControllers()
+	app.UseAuthentication();
+	app.UseAuthorization();
+
+5. In WeatherForecastController.cs, add the following
+	[Authorize]
+        [HttpGet("/ServiceCForecast")]
+        public IEnumerable<WeatherForecast> Get()
+        { ... }
+
+ then,
+	[Authorize(Roles = "Administrator,User")]
+        [HttpPost("/create")]
+        public IActionResult CreateWeatherValue(string weatherValue)
+        {...}
+
+STEP 4:
+1. Open the OcelotApiGateway project
+2. Add JwtAuthenticationManager as Project Reference
+3. In Program.cs, add the following after builder.Services.AddOcelot(builder.Configuration)
+	
+	builder.Services.AddCustomJwtAuthentication();
+
+4. In Program.cs, then add the following before app.MapControllers()
+	app.UseAuthentication();
+	app.UseAuthorization();
+
+5. To configure authentication, authorization in ocelot.json, add the following
+    i. First, add the Upstream, DownStream configuration for AuthenticationApi
+     {
+      "DownstreamPathTemplate": "/api/Account",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "authenticationapi",
+          "Port": 80
+        }
+      ],
+      "UpstreamPathTemplate": "/login",
+      "UpstreamHttpMethod": [ "POST" ]
+    }
+
+    ii. Orchestrate AuthenticationApi in Docker-Compose
+    iii. Add Upstream, Downstream configs for ServiceC project along with the key "AuthenticationOptions" for Authentication,  "RoutClaimsProviderKey" for Authorization, as follows
+     {
+      "DownstreamPathTemplate": "/ServiceCForecast",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "servicec",
+          "Port": 80
+        }
+      ],
+      "AuthenticationOptions": {
+        "AuthenticationProviderKey": "Bearer",
+        "AllowedScopes": []
+      },
+      "UpstreamPathTemplate": "/Bingweather",
+      "UpstreamHttpMethod": [ "GET" ]
+    },
+    {
+      "DownstreamPathTemplate": "/create",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "servicec",
+          "Port": 80
+        }
+      ],
+      "AuthenticationOptions": {
+        "AuthenticationProviderKey": "Bearer",
+        "AllowedScopes": []
+      },
+      "RouteClaimsRequirement": { "Role": "Administrator" },
+      "UpstreamPathTemplate": "/create",
+      "UpstreamHttpMethod": [ "POST" ]
+
+    }
+
+** PS: All services configured in ocelot.json, are orchestrated in docker-compose
+       The "Host" key corresponds to the service name as given in docker-compose
+
+  iv. Add a GlobalConfiguration key for the gateway, after all the Upstream, Downstream configuration array
+	 "GlobalConfiguration": { "BaseUrl": "http://localhost:80" }
+
+STEP 5:
+Build and run Docker-Compose project
+Verify the Apis in Postman (as per Upstream values above)
+1.  HttpPost /login
+     Here, a token will be available. Copy this jwt token.
+2.  HttpGet /BingWeather
+	In Headers tab, add Authorization Bearer <copied jwt token>
+3.  HttpPost /create?weatherValue=newValue
+	In Headers tab, add Authorization Bearer <copied jwt token>
+
+This completes Authentication and Authorization configuration in Ocelot Api Gateway
+
+
+
